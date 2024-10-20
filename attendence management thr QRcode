@@ -1,0 +1,179 @@
+import pandas as pd
+from datetime import datetime, time
+from openpyxl import Workbook
+from openpyxl.styles import PatternFill
+
+# Define the color fills for attendance status
+red_fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")   # Absent
+yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")  # Partial attendance
+green_fill = PatternFill(start_color="00FF00", end_color="00FF00", fill_type="solid")   # Full attendance
+white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")   # White fill for extra marks or out of time
+skyblue_fill = PatternFill(start_color="87CEEB", end_color="87CEEB", fill_type="solid")  # Sky blue fill for non-lecture days
+
+# Read input files
+def read_student_list(file_path):
+    """Read student list from the file"""
+    with open(file_path, 'r') as file:
+        students = {}
+        for line in file:
+            roll_no, name = line.strip().split(" ", 1)
+            students[roll_no] = name
+        return students
+
+def read_dates(file_path):
+    """Read lecture dates from the file"""
+    with open(file_path, 'r') as file:
+        return sorted([line.strip() for line in file])  # Ensure dates are sorted
+
+def read_non_lecture_dates(file_path):
+    """Read non-lecture dates from the file"""
+    with open(file_path, 'r') as file:
+        return sorted([line.strip() for line in file])  # Ensure dates are sorted
+
+def read_attendance(file_path):
+    """Read attendance from the CSV file"""
+    attendance_data = pd.read_csv(file_path)
+
+    attendance_records = {}
+    for index, row in attendance_data.iterrows():
+        datetime_str = row['Timestamp']
+        roll_no_name = row['Roll']
+
+        # Parse date and time
+        try:
+            timestamp = datetime.strptime(datetime_str, "%d-%m-%Y %H:%M")
+        except ValueError:
+            print(f"Skipping malformed datetime: {datetime_str}")
+            continue
+
+        # Parse roll number and name
+        if not isinstance(roll_no_name, str):
+            print(f"Skipping malformed roll_no_name: {roll_no_name}")
+            continue
+
+        try:
+            roll_no, name = roll_no_name.split(" ", 1)
+        except ValueError:
+            print(f"Skipping malformed roll_no_name: {roll_no_name}")
+            continue
+
+        if roll_no not in attendance_records:
+            attendance_records[roll_no] = []
+        attendance_records[roll_no].append(timestamp)
+
+    return attendance_records
+
+def generate_attendance_report():
+    # File paths for inputs
+    student_list_file = "stud_list.txt"
+    attendance_file = "input_attendance.csv"
+    dates_file = "dates.txt"
+    non_lecture_dates_file = "non_lect_dates.txt"  # New file for non-lecture dates
+
+    # Read data from input files
+    students = read_student_list(student_list_file)
+    lecture_dates = read_dates(dates_file)
+    non_lecture_dates = read_non_lecture_dates(non_lecture_dates_file)
+    
+    # Combine lecture and non-lecture dates and sort them
+    all_dates = sorted(set(lecture_dates + non_lecture_dates))
+    
+    attendance_records = read_attendance(attendance_file)
+
+    # Create a new workbook for the output Excel file
+    workbook = Workbook()
+    sheet = workbook.active
+
+    # Set up header
+    header = ["Roll No", "Name"] + all_dates + ["Total Attendance Marked", "Sum of Valid Attendance", "Proxy", "Total Attendance Allowed"]
+    sheet.append(header)
+
+    # Fill in the data row by row
+    for roll_no, name in students.items():
+        row_data = [roll_no, name]
+        
+        total_attendance_count = 0  # Total attendance marks
+        valid_attendance_sum = 0  # Sum valid attendance (either 1 or 2) for the student
+
+        for date in all_dates:
+            date_obj = datetime.strptime(date, "%d/%m/%Y")
+            timestamps = attendance_records.get(roll_no, [])
+
+            # Count attendance for the given date
+            attendance_count = sum(1 for ts in timestamps if ts.date() == date_obj.date())
+            total_attendance_count += attendance_count  # Increment total attendance count
+
+            # Time bounds for attendance check
+            start_time = time(18, 0)  # 6:00 PM
+            end_time = time(20, 0)    # 8:00 PM
+            
+            # Initialize attendance status
+            attendance_status = None  # Default to None to indicate no status assigned
+            white_cell = False  # Flag for white cell marking
+
+            # Check timestamps for attendance on the given date
+            for ts in timestamps:
+                if ts.date() == date_obj.date():
+                    # Check if timestamp is within allowed time range
+                    if ts.time() < start_time or ts.time() > end_time:
+                        white_cell = True  # Mark as white due to attendance outside class time
+
+            # Determine attendance status based on count
+            if attendance_count >= 3:
+                attendance_status = attendance_count  # Display count for excessive attendance
+                white_cell = True  # Color the cell white
+            elif attendance_count == 2:
+                attendance_status = 2  # Full attendance
+            elif attendance_count == 1:
+                attendance_status = 1  # Partial attendance
+            
+            # If no status was determined and not white, consider it as absent
+            if attendance_status is None and not white_cell:
+                attendance_status = 0  # Default to absent if no other status was assigned
+            
+            # Mark non-lecture days explicitly with 0 and sky blue fill
+            if date in non_lecture_dates:
+                attendance_status = 0  # Ensure non-lecture dates default to 0 attendance
+            
+            # Add the attendance status or count to row_data
+            row_data.append(attendance_status if attendance_status is not None else 0)  # Explicitly mark absent on lecture days
+
+            # Add to the valid attendance sum if the status is either 1 (Partial) or 2 (Full)
+            if attendance_status in [1, 2]:
+                valid_attendance_sum += attendance_status
+
+        # Calculate Proxy column (modulus of total attendance count - valid attendance sum)
+        proxy_value = total_attendance_count - valid_attendance_sum
+
+        # Append the total attendance count, valid attendance sum, proxy value, and total attendance allowed to the row
+        row_data.append(total_attendance_count)
+        row_data.append(valid_attendance_sum)
+        row_data.append(proxy_value)
+        row_data.append(14)  # Total attendance allowed (fixed value)
+
+        # Add the row data to the sheet
+        sheet.append(row_data)
+
+    # Apply color formatting based on attendance status
+    for row in sheet.iter_rows(min_row=2, max_row=sheet.max_row, min_col=3, max_col=sheet.max_column-4):
+        for cell in row:
+            if cell.value == 0:  # Absent
+                # If it's a non-lecture day, apply sky blue fill
+                if all_dates[cell.column - 3] in non_lecture_dates:
+                    cell.fill = skyblue_fill
+                else:
+                    cell.fill = red_fill
+            elif cell.value == 1:  # Partial attendance
+                cell.fill = yellow_fill
+            elif cell.value == 2:  # Full attendance
+                cell.fill = green_fill
+            elif isinstance(cell.value, int) and cell.value >= 3:  # Count is 3 or more
+                cell.fill = white_fill  # Mark as white for excessive attendance
+
+    # Save the workbook to a file
+    output_file = "output_excel_with_totals_and_proxy.xlsx"
+    workbook.save(output_file)
+    print(f"Attendance report generated and saved to {output_file}")
+
+# Run the attendance report generation
+generate_attendance_report()
