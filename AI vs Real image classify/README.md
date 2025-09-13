@@ -22,6 +22,7 @@ The file deploy.py contains the code for web application generated using streaml
 Check out the live version here - "https://ai-vs-real-image-classifier.streamlit.app/"
 
 ## Team:
- - B Jnana Sai (Jnana-Sai)
- - K Leela Varshini(Leela-Varshini)
- - K Hitesh(bunny11111)
+ - Harshini 
+ - Sasya
+ - Ishma
+ 
